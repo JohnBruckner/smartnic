@@ -1,0 +1,13 @@
+--- kernel/fork.c	2018-06-13 10:15:29.000000000 -0400
++++ kernel/fork.c	2020-03-30 16:06:52.634727532 -0400
+@@ -770,6 +820,10 @@ void mmput(struct mm_struct *mm)
+ 		}
+ 		if (mm->binfmt)
+ 			module_put(mm->binfmt->module);
++#ifdef CONFIG_POPCORN
++		if (mm->remote)
++			free_remote_context(mm->remote);
++#endif
+ 		mmdrop(mm);
+ 	}
+ }
