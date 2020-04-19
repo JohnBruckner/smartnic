@@ -1,0 +1,21 @@
+--- fs/proc/meminfo.c	2018-06-13 10:15:29.000000000 -0400
++++ fs/proc/meminfo.c	2020-03-30 16:06:52.358728100 -0400
+@@ -38,6 +41,10 @@ static int meminfo_proc_show(struct seq_
+ 	struct zone *zone;
+ 	int lru;
+ 
++#ifdef CONFIG_POPCORN_REMOTE_INFO
++	remote_mem_info_response_t rem_mem;
++#endif
++
+ /*
+  * display in kilobytes.
+  */
+@@ -82,6 +89,7 @@ static int meminfo_proc_show(struct seq_
+ 	if (available < 0)
+ 		available = 0;
+ 
++#ifndef CONFIG_POPCORN_REMOTE_INFO
+ 	/*
+ 	 * Tagged format, for easy grepping and expansion.
+ 	 */

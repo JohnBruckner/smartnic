@@ -1,0 +1,14 @@
+--- fs/binfmt_elf.c	2018-06-13 10:15:29.000000000 -0400
++++ fs/binfmt_elf.c	2020-03-30 16:06:52.210728404 -0400
+@@ -683,6 +683,11 @@ static int load_elf_binary(struct linux_
+ 		struct elfhdr interp_elf_ex;
+ 	} *loc;
+ 	struct arch_elf_state arch_state = INIT_ARCH_ELF_STATE;
++#if 0
++	char *string_table = NULL;
++	long string_table_length = 0;
++	struct elf_shdr *shdr = NULL;
++#endif
+ 
+ 	loc = kmalloc(sizeof(*loc), GFP_KERNEL);
+ 	if (!loc) {

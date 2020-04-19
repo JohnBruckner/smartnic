@@ -1,0 +1,656 @@
+diff -uprN linux-4.4.137/fs/binfmt_elf.c popcorn-kernel/fs/binfmt_elf.c
+--- linux-4.4.137/fs/binfmt_elf.c	2018-06-13 10:15:29.000000000 -0400
++++ popcorn-kernel/fs/binfmt_elf.c	2020-03-30 16:06:52.210728404 -0400
+@@ -683,6 +683,11 @@ static int load_elf_binary(struct linux_
+ 		struct elfhdr interp_elf_ex;
+ 	} *loc;
+ 	struct arch_elf_state arch_state = INIT_ARCH_ELF_STATE;
++#if 0
++	char *string_table = NULL;
++	long string_table_length = 0;
++	struct elf_shdr *shdr = NULL;
++#endif
+ 
+ 	loc = kmalloc(sizeof(*loc), GFP_KERNEL);
+ 	if (!loc) {
+@@ -718,6 +723,43 @@ static int load_elf_binary(struct linux_
+ 	start_data = 0;
+ 	end_data = 0;
+ 
++#if 0
++	/* Ajith- allocate and populate the elf section header */
++	i = loc->elf_ex.e_shnum * sizeof(struct elf_shdr);
++
++	shdr = kmalloc(i, GFP_KERNEL);
++	if (shdr == NULL) {
++		printk("%s:%d - Failed to allocate memory\n", __func__, __LINE__);
++		retval = -ENOMEM;
++		goto out;
++	}
++
++	retval = kernel_read(bprm->file, loc->elf_ex.e_shoff, (char *)shdr, i);
++	if (retval != i) {
++		printk("Error loading section header\n"); //goto exit_read; //TODO
++	}
++
++	/* Ajith - Creating string table for elf sections */
++	if (loc->elf_ex.e_shstrndx < loc->elf_ex.e_shnum) {
++		struct elf_shdr *espnt = shdr + loc->elf_ex.e_shstrndx;
++		i = espnt->sh_size;
++
++		string_table = kmalloc(i, GFP_KERNEL);
++		if(string_table == NULL) {
++			printk("%s:%d - Failed to allocate memory\n", __func__, __LINE__);
++			kfree(shdr);
++			retval = -ENOMEM;
++			goto out;
++		}
++
++		retval = kernel_read(bprm->file, espnt->sh_offset, string_table, i);
++		if (retval != i) {
++			printk("Error loading string table\n");//goto exit_read;//TODO
++		}    
++		string_table_length = string_table != NULL ? i : 0;
++	}
++#endif
++
+ 	for (i = 0; i < loc->elf_ex.e_phnum; i++) {
+ 		if (elf_ppnt->p_type == PT_INTERP) {
+ 			/* This is the program interpreter used for
+@@ -865,6 +907,9 @@ static int load_elf_binary(struct linux_
+ 		int elf_prot = 0, elf_flags;
+ 		unsigned long k, vaddr;
+ 		unsigned long total_size = 0;
++#if 0
++		int j;
++#endif
+ 
+ 		if (elf_ppnt->p_type != PT_LOAD)
+ 			continue;
+@@ -975,6 +1020,42 @@ static int load_elf_binary(struct linux_
+ 			goto out_free_dentry;
+ 		}
+ 
++#if 0
++		/* Ajith - Read the elf sections */
++
++		for (j = 1; j < loc->elf_ex.e_shnum; j++) {
++			struct elf_shdr *espnt = shdr + j;
++			struct vm_area_struct *vma;
++			if (espnt->sh_size <= 0)
++				continue;
++
++			for (vma = current->mm->mmap; vma != NULL; vma = vma->vm_next) {
++				/* Compare allocated sections by VMA, unallocated
++				 * sections by file offset.
++				 */
++			   if ((espnt->sh_flags & SHF_ALLOC) == 0)
++				   continue;
++
++				if (espnt->sh_addr < vma->vm_start ||
++						espnt->sh_addr + espnt->sh_size > vma->vm_end)
++					continue;
++				 /*
++				 printk ("In %s:%d: [%s %d 0x%lx:0x%lx]\n",
++					 __func__, __LINE__,
++					 string_table ? & string_table[espnt->sh_name]
++								  : "?", espnt->sh_type,
++					 (unsigned long)espnt->sh_addr,
++					 (unsigned long)espnt->sh_addr + espnt->sh_size);
++				 */
++
++				 if(!strcmp(".text", &string_table[espnt->sh_name]) || 
++					!strcmp(".got", &string_table[espnt->sh_name]) ||
++					!strcmp(".got.plt", &string_table[espnt->sh_name]))
++						vma->vm_flags |= VM_FETCH_LOCAL;
++			}
++		}
++#endif
++
+ 		if (!load_addr_set) {
+ 			load_addr_set = 1;
+ 			load_addr = (elf_ppnt->p_vaddr - elf_ppnt->p_offset);
+@@ -1025,6 +1106,15 @@ static int load_elf_binary(struct linux_
+ 	start_data += load_bias;
+ 	end_data += load_bias;
+ 
++#if 0
++	/*Freeup allocated memory*/
++	if(shdr != NULL)
++		kfree(shdr);
++
++	if(string_table != NULL)
++		kfree(string_table);
++#endif
++
+ 	/* Calling set_brk effectively mmaps the pages that we need
+ 	 * for the bss and break sections.  We must do this before
+ 	 * mapping in the interpreter, to make sure it doesn't wind
+diff -uprN linux-4.4.137/fs/eventpoll.c popcorn-kernel/fs/eventpoll.c
+--- linux-4.4.137/fs/eventpoll.c	2018-06-13 10:15:29.000000000 -0400
++++ popcorn-kernel/fs/eventpoll.c	2020-03-30 16:06:52.250728321 -0400
+@@ -43,6 +43,10 @@
+ #include <linux/compat.h>
+ #include <linux/rculist.h>
+ 
++#ifdef CONFIG_POPCORN
++#include <popcorn/syscall_server.h>
++#include <popcorn/types.h>
++#endif
+ /*
+  * LOCKING:
+  * There are three level of locking required by epoll :
+@@ -1778,6 +1782,13 @@ SYSCALL_DEFINE1(epoll_create1, int, flag
+ 	struct eventpoll *ep = NULL;
+ 	struct file *file;
+ 
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		error = redirect_epoll_create1(flags);
++		SSPRINTK("remote epoll_create ret: %d\n", error);
++		return error;
++	}
++#endif
+ 	/* Check the EPOLL_* constant for consistency.  */
+ 	BUILD_BUG_ON(EPOLL_CLOEXEC != O_CLOEXEC);
+ 
+@@ -1839,6 +1850,13 @@ SYSCALL_DEFINE4(epoll_ctl, int, epfd, in
+ 	struct epoll_event epds;
+ 	struct eventpoll *tep = NULL;
+ 
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		error = redirect_epoll_ctl(epfd, op, fd, event);
++		SSPRINTK("remote epoll_ctl ret: %d\n", error);
++		return error;
++	}
++#endif
+ 	error = -EFAULT;
+ 	if (ep_op_has_event(op) &&
+ 	    copy_from_user(&epds, event, sizeof(struct epoll_event)))
+@@ -1976,6 +1994,13 @@ SYSCALL_DEFINE4(epoll_wait, int, epfd, s
+ 	struct fd f;
+ 	struct eventpoll *ep;
+ 
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		error = redirect_epoll_wait(epfd, events, maxevents, timeout);
++		SSPRINTK("remote epoll_wait ret: %d\n", error);
++		return error;
++	}
++#endif
+ 	/* The maximum number of event must be greater than zero */
+ 	if (maxevents <= 0 || maxevents > EP_MAX_EVENTS)
+ 		return -EINVAL;
+@@ -2022,6 +2047,14 @@ SYSCALL_DEFINE6(epoll_pwait, int, epfd,
+ 	int error;
+ 	sigset_t ksigmask, sigsaved;
+ 
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		error = redirect_epoll_pwait(epfd, events, maxevents, timeout,
++					     sigmask, sigsetsize);
++		SSPRINTK("remote epoll_pwait ret: %d\n", error);
++		return error;
++	}
++#endif
+ 	/*
+ 	 * If the caller wants a certain signal mask to be set during the wait,
+ 	 * we apply it here.
+diff -uprN linux-4.4.137/fs/fcntl.c popcorn-kernel/fs/fcntl.c
+--- linux-4.4.137/fs/fcntl.c	2018-06-13 10:15:29.000000000 -0400
++++ popcorn-kernel/fs/fcntl.c	2020-03-30 16:06:52.266728288 -0400
+@@ -357,10 +357,22 @@ static int check_fcntl_cmd(unsigned cmd)
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_POPCORN
++#include <popcorn/types.h>
++#include <popcorn/syscall_server.h>
++#endif
++
+ SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
+-{	
+-	struct fd f = fdget_raw(fd);
++{
++	struct fd f;
+ 	long err = -EBADF;
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		err = redirect_fcntl(fd, cmd, arg);
++		return err;
++	}
++#endif
++	f = fdget_raw(fd);
+ 
+ 	if (!f.file)
+ 		goto out;
+diff -uprN linux-4.4.137/fs/ioctl.c popcorn-kernel/fs/ioctl.c
+--- linux-4.4.137/fs/ioctl.c	2018-06-13 10:15:29.000000000 -0400
++++ popcorn-kernel/fs/ioctl.c	2020-03-30 16:06:52.282728255 -0400
+@@ -18,6 +18,11 @@
+ 
+ #include <asm/ioctls.h>
+ 
++#ifdef CONFIG_POPCORN
++#include <popcorn/types.h>
++#include <popcorn/syscall_server.h>
++#endif
++
+ /* So that the fiemap access checks can't overflow on 32 bit machines. */
+ #define FIEMAP_MAX_EXTENTS	(UINT_MAX / sizeof(struct fiemap_extent))
+ 
+@@ -613,7 +618,16 @@ int do_vfs_ioctl(struct file *filp, unsi
+ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
+ {
+ 	int error;
+-	struct fd f = fdget(fd);
++	struct fd f;
++
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		error = redirect_ioctl(fd, cmd, arg);
++		return error;
++	}
++#endif
++
++	f = fdget(fd);
+ 
+ 	if (!f.file)
+ 		return -EBADF;
+diff -uprN linux-4.4.137/fs/open.c popcorn-kernel/fs/open.c
+--- linux-4.4.137/fs/open.c	2018-06-13 10:15:29.000000000 -0400
++++ popcorn-kernel/fs/open.c	2020-03-30 16:06:52.354728108 -0400
+@@ -34,6 +34,11 @@
+ 
+ #include "internal.h"
+ 
++#ifdef CONFIG_POPCORN
++#include <popcorn/syscall_server.h>
++#include <popcorn/types.h>
++#endif
++
+ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
+ 	struct file *filp)
+ {
+@@ -1035,8 +1040,16 @@ long do_sys_open(int dfd, const char __u
+ 	return fd;
+ }
+ 
++
+ SYSCALL_DEFINE3(open, const char __user *, filename, int, flags, umode_t, mode)
+ {
++	int ret;
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		ret = redirect_open(filename, flags, mode);
++		return ret;
++	}
++#endif
+ 	if (force_o_largefile())
+ 		flags |= O_LARGEFILE;
+ 
+@@ -1098,7 +1111,15 @@ EXPORT_SYMBOL(filp_close);
+  */
+ SYSCALL_DEFINE1(close, unsigned int, fd)
+ {
+-	int retval = __close_fd(current->files, fd);
++	int retval;
++
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		retval = redirect_close(fd);
++		return retval;
++	}
++#endif
++	retval = __close_fd(current->files, fd);
+ 
+ 	/* can't restart close syscall because file table entry was cleared */
+ 	if (unlikely(retval == -ERESTARTSYS ||
+diff -uprN linux-4.4.137/fs/proc/base.c popcorn-kernel/fs/proc/base.c
+--- linux-4.4.137/fs/proc/base.c	2018-06-13 10:15:29.000000000 -0400
++++ popcorn-kernel/fs/proc/base.c	2020-03-30 16:06:52.358728100 -0400
+@@ -90,6 +90,9 @@
+ #ifdef CONFIG_HARDWALL
+ #include <asm/hardwall.h>
+ #endif
++#ifdef CONFIG_POPCORN
++#include <popcorn/types.h>
++#endif
+ #include <trace/events/oom.h>
+ #include "internal.h"
+ #include "fd.h"
+@@ -216,6 +219,12 @@ static ssize_t proc_pid_cmdline_read(str
+ 	tsk = get_proc_task(file_inode(file));
+ 	if (!tsk)
+ 		return -ESRCH;
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(tsk)) {
++		put_task_struct(tsk);
++		return 0;
++	}
++#endif
+ 	mm = get_task_mm(tsk);
+ 	put_task_struct(tsk);
+ 	if (!mm)
+diff -uprN linux-4.4.137/fs/proc/meminfo.c popcorn-kernel/fs/proc/meminfo.c
+--- linux-4.4.137/fs/proc/meminfo.c	2018-06-13 10:15:29.000000000 -0400
++++ popcorn-kernel/fs/proc/meminfo.c	2020-03-30 16:06:52.358728100 -0400
+@@ -18,6 +18,9 @@
+ #include <asm/page.h>
+ #include <asm/pgtable.h>
+ #include "internal.h"
++#ifdef CONFIG_POPCORN_REMOTE_INFO
++#include <popcorn/remote_meminfo.h>
++#endif
+ 
+ void __attribute__((weak)) arch_report_meminfo(struct seq_file *m)
+ {
+@@ -35,6 +38,10 @@ static int meminfo_proc_show(struct seq_
+ 	struct zone *zone;
+ 	int lru;
+ 
++#ifdef CONFIG_POPCORN_REMOTE_INFO
++	remote_mem_info_response_t rem_mem;
++#endif
++
+ /*
+  * display in kilobytes.
+  */
+@@ -79,6 +86,7 @@ static int meminfo_proc_show(struct seq_
+ 	if (available < 0)
+ 		available = 0;
+ 
++#ifndef CONFIG_POPCORN_REMOTE_INFO
+ 	/*
+ 	 * Tagged format, for easy grepping and expansion.
+ 	 */
+@@ -200,6 +208,128 @@ static int meminfo_proc_show(struct seq_
+ #endif
+ 		);
+ 
++#else // CONFIG_POPCORN_REMOTE_INFO
++	remote_proc_mem_info(&rem_mem);
++
++	seq_printf(m,
++		"MemTotal:       %8lu kB\n"
++		"MemFree:        %8lu kB\n"
++		"MemAvailable:   %8lu kB\n"
++		"Buffers:        %8lu kB\n"
++		"Cached:         %8lu kB\n"
++		"SwapCached:     %8lu kB\n"
++		"Active:         %8lu kB\n"
++		"Inactive:       %8lu kB\n"
++		"Active(anon):   %8lu kB\n"
++		"Inactive(anon): %8lu kB\n"
++		"Active(file):   %8lu kB\n"
++		"Inactive(file): %8lu kB\n"
++		"Unevictable:    %8lu kB\n"
++		"Mlocked:        %8lu kB\n"
++#ifdef CONFIG_HIGHMEM
++		"HighTotal:      %8lu kB\n"
++		"HighFree:       %8lu kB\n"
++		"LowTotal:       %8lu kB\n"
++		"LowFree:        %8lu kB\n"
++#endif
++#ifndef CONFIG_MMU
++		"MmapCopy:       %8lu kB\n"
++#endif
++		"SwapTotal:      %8lu kB\n"
++		"SwapFree:       %8lu kB\n"
++		"Dirty:          %8lu kB\n"
++		"Writeback:      %8lu kB\n"
++		"AnonPages:      %8lu kB\n"
++		"Mapped:         %8lu kB\n"
++		"Shmem:          %8lu kB\n"
++		"Slab:           %8lu kB\n"
++		"SReclaimable:   %8lu kB\n"
++		"SUnreclaim:     %8lu kB\n"
++		"KernelStack:    %8lu kB\n"
++		"PageTables:     %8lu kB\n"
++#ifdef CONFIG_QUICKLIST
++		"Quicklists:     %8lu kB\n"
++#endif
++		"NFS_Unstable:   %8lu kB\n"
++		"Bounce:         %8lu kB\n"
++		"WritebackTmp:   %8lu kB\n"
++		"CommitLimit:    %8lu kB\n"
++		"Committed_AS:   %8lu kB\n"
++		"VmallocTotal:   %8lu kB\n"
++		"VmallocUsed:    %8lu kB\n"
++		"VmallocChunk:   %8lu kB\n"
++#ifdef CONFIG_MEMORY_FAILURE
++		"HardwareCorrupted: %5lu kB\n"
++#endif
++#ifdef CONFIG_TRANSPARENT_HUGEPAGE
++		"AnonHugePages:  %8lu kB\n"
++#endif
++#ifdef CONFIG_CMA
++		"CmaTotal:       %8lu kB\n"
++		"CmaFree:        %8lu kB\n"
++#endif
++		,
++		K(i.totalram) + rem_mem.MemTotal,
++		K(i.freeram) + rem_mem.MemFree,
++		K(available) + rem_mem.MemAvailable,
++		K(i.bufferram) + rem_mem.Buffers,
++		K(cached) + rem_mem.Cached,
++		K(total_swapcache_pages()) + rem_mem.SwapCached,
++		K(pages[LRU_ACTIVE_ANON]   + pages[LRU_ACTIVE_FILE]) + rem_mem.Active,
++		K(pages[LRU_INACTIVE_ANON] + pages[LRU_INACTIVE_FILE]) + rem_mem.Inactive,
++		K(pages[LRU_ACTIVE_ANON]) + rem_mem.Active_anon,
++		K(pages[LRU_INACTIVE_ANON]) + rem_mem.Inactive_anon,
++		K(pages[LRU_ACTIVE_FILE]) + rem_mem.Active_file,
++		K(pages[LRU_INACTIVE_FILE]) + rem_mem.Inactive_file,
++		K(pages[LRU_UNEVICTABLE]) + rem_mem.Unevictable,
++		K(global_page_state(NR_MLOCK)) + rem_mem.Mlocked,
++#ifdef CONFIG_HIGHMEM
++		K(i.totalhigh) + rem_mem.HighTotal,
++		K(i.freehigh) + rem_mem.HighFree,
++		K(i.totalram-i.totalhigh) + rem_mem.LowTotal,
++		K(i.freeram-i.freehigh) + rem_mem.LowFree,
++#endif
++#ifndef CONFIG_MMU
++		K((unsigned long) atomic_long_read(&mmap_pages_allocated)) + rem_mem.MmapCopy,
++#endif
++		K(i.totalswap) + rem_mem.SwapTotal,
++		K(i.freeswap) + rem_mem.SwapFree,
++		K(global_page_state(NR_FILE_DIRTY)) + rem_mem.Dirty,
++		K(global_page_state(NR_WRITEBACK)) + rem_mem.Writeback,
++		K(global_page_state(NR_ANON_PAGES)) + rem_mem.AnonPages,
++		K(global_page_state(NR_FILE_MAPPED)) + rem_mem.Mapped,
++		K(i.sharedram) + rem_mem.Shmem,
++		K(global_page_state(NR_SLAB_RECLAIMABLE) +
++				global_page_state(NR_SLAB_UNRECLAIMABLE)) + rem_mem.Slab,
++		K(global_page_state(NR_SLAB_RECLAIMABLE)) + rem_mem.SReclaimable,
++		K(global_page_state(NR_SLAB_UNRECLAIMABLE)) + rem_mem.SUnreclaim,
++		global_page_state(NR_KERNEL_STACK) * THREAD_SIZE / 1024 + rem_mem.KernelStack,
++		K(global_page_state(NR_PAGETABLE)) + rem_mem.PageTables,
++#ifdef CONFIG_QUICKLIST
++		K(quicklist_total_size()) + rem_mem.Quicklists,
++#endif
++		K(global_page_state(NR_UNSTABLE_NFS)) + rem_mem.NFS_Unstable,
++		K(global_page_state(NR_BOUNCE)) + rem_mem.Bounce,
++		K(global_page_state(NR_WRITEBACK_TEMP)) + rem_mem.WritebackTmp,
++		K(vm_commit_limit()) + rem_mem.CommitLimit,
++		K(committed) + rem_mem.Committed_AS,
++		((unsigned long)VMALLOC_TOTAL >> 10) + rem_mem.VmallocTotal,
++		0ul, // used to be vmalloc 'used'
++		0ul  // used to be vmalloc 'largest_chunk'
++#ifdef CONFIG_MEMORY_FAILURE
++		, (atomic_long_read(&num_poisoned_pages) << (PAGE_SHIFT - 10)) + rem_mem.HardwareCorrupted
++#endif
++#ifdef CONFIG_TRANSPARENT_HUGEPAGE
++		, K(global_page_state(NR_ANON_TRANSPARENT_HUGEPAGES) *
++		   HPAGE_PMD_NR) + rem_mem.AnonHugePages
++#endif
++#ifdef CONFIG_CMA
++		, K(totalcma_pages) + rem_mem.CmaTotal
++		, K(global_page_state(NR_FREE_CMA_PAGES)) + rem_mem.CmaFree
++#endif
++		);
++#endif
++
+ 	hugetlb_report_meminfo(m);
+ 
+ 	arch_report_meminfo(m);
+diff -uprN linux-4.4.137/fs/read_write.c popcorn-kernel/fs/read_write.c
+--- linux-4.4.137/fs/read_write.c	2018-06-13 10:15:29.000000000 -0400
++++ popcorn-kernel/fs/read_write.c	2020-03-30 16:06:52.362728091 -0400
+@@ -559,10 +559,24 @@ static inline void file_pos_write(struct
+ 	file->f_pos = pos;
+ }
+ 
++#ifdef CONFIG_POPCORN
++#include <popcorn/types.h>
++#include <popcorn/syscall_server.h>
++#endif
++
+ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
+ {
+-	struct fd f = fdget_pos(fd);
+-	ssize_t ret = -EBADF;
++	struct fd f;
++	ssize_t ret;
++
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		ret = redirect_read(fd, buf, count);
++		return ret;
++	}
++#endif
++	f = fdget_pos(fd);
++	ret = -EBADF;
+ 
+ 	if (f.file) {
+ 		loff_t pos = file_pos_read(f.file);
+@@ -577,8 +591,18 @@ SYSCALL_DEFINE3(read, unsigned int, fd,
+ SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf,
+ 		size_t, count)
+ {
+-	struct fd f = fdget_pos(fd);
+-	ssize_t ret = -EBADF;
++	struct fd f;
++	ssize_t ret;
++
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		ret = redirect_write(fd, buf, count);
++		return ret;
++	}
++#endif
++
++	f = fdget_pos(fd);
++	ret = -EBADF;
+ 
+ 	if (f.file) {
+ 		loff_t pos = file_pos_read(f.file);
+@@ -872,8 +896,18 @@ SYSCALL_DEFINE3(readv, unsigned long, fd
+ SYSCALL_DEFINE3(writev, unsigned long, fd, const struct iovec __user *, vec,
+ 		unsigned long, vlen)
+ {
+-	struct fd f = fdget_pos(fd);
+-	ssize_t ret = -EBADF;
++	struct fd f;
++	ssize_t ret;
++
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		ret = redirect_writev(fd, vec, vlen);
++		return ret;
++	}
++#endif
++
++	f = fdget_pos(fd);
++	ret = -EBADF;
+ 
+ 	if (f.file) {
+ 		loff_t pos = file_pos_read(f.file);
+@@ -1276,6 +1310,13 @@ SYSCALL_DEFINE4(sendfile64, int, out_fd,
+ 	loff_t pos;
+ 	ssize_t ret;
+ 
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		ret = redirect_sendfile64(out_fd, in_fd, offset, count);
++		return ret;
++	}
++#endif
++
+ 	if (offset) {
+ 		if (unlikely(copy_from_user(&pos, offset, sizeof(loff_t))))
+ 			return -EFAULT;
+diff -uprN linux-4.4.137/fs/select.c popcorn-kernel/fs/select.c
+--- linux-4.4.137/fs/select.c	2018-06-13 10:15:29.000000000 -0400
++++ popcorn-kernel/fs/select.c	2020-03-30 16:06:52.366728083 -0400
+@@ -33,6 +33,11 @@
+ 
+ #include <asm/uaccess.h>
+ 
++#ifdef CONFIG_POPCORN
++#include <popcorn/syscall_server.h>
++#include <popcorn/types.h>
++#endif
++
+ 
+ /*
+  * Estimate expected accuracy in ns from a timeval.
+@@ -632,7 +637,17 @@ SYSCALL_DEFINE5(select, int, n, fd_set _
+ {
+ 	struct timespec end_time, *to = NULL;
+ 	struct timeval tv;
+-	int ret;
++	int ret, error;
++
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		printk("Before redirect select");
++		error = redirect_select(n, inp, outp, exp, tvp);
++		printk("After redirect select");
++		SSPRINTK("Remote select return: %d\n", error);
++		return error;
++	}
++#endif
+ 
+ 	if (tvp) {
+ 		if (copy_from_user(&tv, tvp, sizeof(tv)))
+diff -uprN linux-4.4.137/fs/stat.c popcorn-kernel/fs/stat.c
+--- linux-4.4.137/fs/stat.c	2018-06-13 10:15:29.000000000 -0400
++++ popcorn-kernel/fs/stat.c	2020-03-30 16:06:52.370728075 -0400
+@@ -18,6 +18,11 @@
+ #include <asm/uaccess.h>
+ #include <asm/unistd.h>
+ 
++#ifdef CONFIG_POPCORN
++#include <popcorn/types.h>
++#include <popcorn/syscall_server.h>
++#endif
++
+ void generic_fillattr(struct inode *inode, struct kstat *stat)
+ {
+ 	stat->dev = inode->i_sb->s_dev;
+@@ -203,6 +208,7 @@ SYSCALL_DEFINE2(lstat, const char __user
+ SYSCALL_DEFINE2(fstat, unsigned int, fd, struct __old_kernel_stat __user *, statbuf)
+ {
+ 	struct kstat stat;
++
+ 	int error = vfs_fstat(fd, &stat);
+ 
+ 	if (!error)
+@@ -304,8 +310,15 @@ SYSCALL_DEFINE4(newfstatat, int, dfd, co
+ SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)
+ {
+ 	struct kstat stat;
+-	int error = vfs_fstat(fd, &stat);
++	int error;
+ 
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		error = redirect_fstat(fd, statbuf);
++		return error;
++	}
++#endif
++	error = vfs_fstat(fd, &stat);
+ 	if (!error)
+ 		error = cp_new_stat(&stat, statbuf);
+ 
