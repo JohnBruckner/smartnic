@@ -1,0 +1,36 @@
+--- mm/mmap.c	2018-06-13 10:15:29.000000000 -0400
++++ mm/mmap.c	2020-03-30 16:06:52.698727400 -0400
+@@ -298,7 +304,16 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
+ 	unsigned long min_brk;
+ 	bool populate;
+ 
++#ifdef CONFIG_POPCORN
++	if (distributed_remote_process(current)) {
++		while (!down_write_trylock(&mm->mmap_sem))
++			schedule();
++	} else {
++		down_write(&mm->mmap_sem);
++	}
++#else
+ 	down_write(&mm->mmap_sem);
++#endif
+ 
+ #ifdef CONFIG_COMPAT_BRK
+ 	/*
+@@ -2707,7 +2736,16 @@ int vm_munmap(unsigned long start, size_
+ 	int ret;
+ 	struct mm_struct *mm = current->mm;
+ 
++#ifdef CONFIG_POPCORN
++	if (distributed_process(current)) {
++		while (!down_write_trylock(&mm->mmap_sem))
++			schedule();
++	} else {
++		down_write(&mm->mmap_sem);
++	}
++#else
+ 	down_write(&mm->mmap_sem);
++#endif
+ 	ret = do_munmap(mm, start, len);
+ 	up_write(&mm->mmap_sem);
+ 	return ret;

@@ -1,0 +1,33 @@
+--- mm/madvise.c	2018-06-13 10:15:29.000000000 -0400
++++ mm/madvise.c	2020-03-30 16:06:52.694727409 -0400
+@@ -39,6 +46,9 @@ static int madvise_need_mmap_write(int b
+ 	case MADV_REMOVE:
+ 	case MADV_WILLNEED:
+ 	case MADV_DONTNEED:
++#ifdef CONFIG_POPCORN
++	case MADV_RELEASE:
++#endif
+ 		return 0;
+ 	default:
+ 		/* be safe, default to 1. list exceptions explicitly */
+@@ -403,6 +430,10 @@ madvise_vma(struct vm_area_struct *vma,
+ 		return madvise_willneed(vma, prev, start, end);
+ 	case MADV_DONTNEED:
+ 		return madvise_dontneed(vma, prev, start, end);
++#ifdef CONFIG_POPCORN
++	case MADV_RELEASE:
++		return madvise_release(vma, start, end);
++#endif
+ 	default:
+ 		return madvise_behavior(vma, prev, start, end, behavior);
+ 	}
+@@ -430,6 +461,9 @@ madvise_behavior_valid(int behavior)
+ #endif
+ 	case MADV_DONTDUMP:
+ 	case MADV_DODUMP:
++#ifdef CONFIG_POPCORN
++	case MADV_RELEASE:
++#endif
+ 		return true;
+ 
+ 	default:

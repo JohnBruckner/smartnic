@@ -1,0 +1,47 @@
+--- mm/memory.c	2018-06-13 10:15:29.000000000 -0400
++++ mm/memory.c	2020-03-30 16:06:52.698727400 -0400
+@@ -3320,6 +3334,24 @@ static int handle_pte_fault(struct mm_st
+ 	 */
+ 	entry = *pte;
+ 	barrier();
++#ifdef CONFIG_POPCORN
++	if (distributed_process(current)) {
++		int ret = page_server_handle_pte_fault(
++				mm, vma, address, pmd, pte, entry, flags);
++		if (ret == VM_FAULT_RETRY) {
++			int backoff = ++current->backoff_weight;
++			PGPRINTK("  [%d] backoff %d\n", current->pid, backoff);
++			if (backoff <= 10) {
++				udelay(backoff * 100);
++			} else {
++				msleep(backoff - 10);
++			}
++		} else {
++			current->backoff_weight /= 2;
++		}
++		if (ret != VM_FAULT_CONTINUE) return ret;
++	}
++#endif
+ 	if (!pte_present(entry)) {
+ 		if (pte_none(entry)) {
+ 			if (vma_is_anonymous(vma))
+@@ -3329,6 +3361,9 @@ static int handle_pte_fault(struct mm_st
+ 				return do_fault(mm, vma, address, pte, pmd,
+ 						flags, entry);
+ 		}
++#ifdef CONFIG_POPCORN
++		page_server_panic(true, mm, address, pte, entry);
++#endif
+ 		return do_swap_page(mm, vma, address,
+ 					pte, pmd, flags, entry);
+ 	}
+@@ -3618,6 +3799,9 @@ int handle_mm_fault(struct mm_struct *mm
+ 
+ 	count_vm_event(PGFAULT);
+ 	mem_cgroup_count_vm_event(mm, PGFAULT);
++#ifdef CONFIG_POPCORN_STAT_PGFAULTS
++	page_server_start_mm_fault(address);
++#endif
+ 
+ 	/* do counter updates before entering really critical section. */
+ 	check_sync_rss_stat(current);
