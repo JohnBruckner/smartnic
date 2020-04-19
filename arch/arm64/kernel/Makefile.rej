@@ -1,0 +1,11 @@
+--- arch/arm64/kernel/Makefile	2018-06-13 10:15:29.000000000 -0400
++++ arch/arm64/kernel/Makefile	2020-03-30 16:06:47.950737161 -0400
+@@ -42,6 +42,8 @@ arm64-obj-$(CONFIG_PCI)			+= pci.o
+ arm64-obj-$(CONFIG_ARMV8_DEPRECATED)	+= armv8_deprecated.o
+ arm64-obj-$(CONFIG_ACPI)		+= acpi.o
+ 
++obj-$(CONFIG_POPCORN)		+= cpuinfo_popcorn.o process_server.o
++
+ obj-y					+= $(arm64-obj-y) vdso/
+ obj-m					+= $(arm64-obj-m)
+ head-y					:= head.o

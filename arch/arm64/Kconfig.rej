@@ -1,0 +1,10 @@
+--- arch/arm64/Kconfig	2018-06-13 10:15:29.000000000 -0400
++++ arch/arm64/Kconfig	2020-03-30 16:06:47.942737177 -0400
+@@ -93,6 +93,7 @@ config ARM64
+ 	select SPARSE_IRQ
+ 	select SYSCTL_EXCEPTION_TRACE
+ 	select HAVE_CONTEXT_TRACKING
++	select ARCH_SUPPORTS_POPCORN
+ 	help
+ 	  ARM 64-bit (AArch64) Linux support.
+ 
