@@ -413,7 +413,7 @@ static inline int handle_##x(struct pcn_kmsg_message *msg) {\
 	kfree(__pcn_kmsg_work__);
 
 
-#include <linux/sched.h>
+#include <linux/sched/task.h>
 
 static inline struct task_struct *__get_task_struct(pid_t pid)
 {
