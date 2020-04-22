@@ -199,13 +199,13 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
                while (!down_write_trylock(&mm->mmap_sem))
                        schedule();
        } else {
-               down_write(&mm->mmap_sem);
+               if (down_write_killable(&mm->mmap_sem))
+		return -EINTR;
        }
 #else
-        down_write(&mm->mmap_sem);
-#endif
-	if (down_write_killable(&mm->mmap_sem))
+        if (down_write_killable(&mm->mmap_sem))
 		return -EINTR;
+#endif
 
 #ifdef CONFIG_COMPAT_BRK
 	/*
