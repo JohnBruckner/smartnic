@@ -3940,7 +3940,24 @@ static int handle_pte_fault(struct vm_fault *vmf)
 			vmf->pte = NULL;
 		}
 	}
-
+#ifdef CONFIG_POPCORN
+	if (distributed_process(current)) {
+		int ret = page_server_handle_pte_fault(
+				vmf->vma->vm_mm, vmf->vma, vmf->address, vmf->pmd, vmf->pte, vmf->orig_pte, vmf->flags);
+		if (ret == VM_FAULT_RETRY) {
+			int backoff = ++current->backoff_weight;
+			PGPRINTK("  [%d] backoff %d\n", current->pid, backoff);
+			if (backoff <= 10) {
+				udelay(backoff * 100);
+			} else {
+				msleep(backoff - 10);
+			}
+		} else {
+			current->backoff_weight /= 2;
+		}
+		if (ret != VM_FAULT_CONTINUE) return ret;
+	}
+#endif
 	if (!vmf->pte) {
 		if (vma_is_anonymous(vmf->vma))
 			return do_anonymous_page(vmf);
@@ -3948,9 +3965,12 @@ static int handle_pte_fault(struct vm_fault *vmf)
 			return do_fault(vmf);
 	}
 
-	if (!pte_present(vmf->orig_pte))
+	if (!pte_present(vmf->orig_pte)) {
+#ifdef CONFIG_POPCORN
+		page_server_panic(true, vmf->vma->vm_mm, vmf->address, vmf->pte, vmf->orig_pte);
+#endif
 		return do_swap_page(vmf);
-
+	}
 	if (pte_protnone(vmf->orig_pte) && vma_is_accessible(vmf->vma))
 		return do_numa_page(vmf);
 
@@ -4233,7 +4253,11 @@ int handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 
 	count_vm_event(PGFAULT);
 	count_memcg_event_mm(vma->vm_mm, PGFAULT);
-
+	
+#ifdef CONFIG_POPCORN_STAT_PGFAULTS
+	page_server_start_mm_fault(address);
+#endif
+	
 	/* do counter updates before entering really critical section. */
 	check_sync_rss_stat(current);
 
