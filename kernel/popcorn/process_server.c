@@ -12,6 +12,7 @@
  */
 
 #include <linux/sched.h>
+#include <linux/sched/mm.h>
 #include <linux/threads.h>
 #include <linux/slab.h>
 #include <linux/kthread.h>
@@ -22,7 +23,7 @@
 
 #include <asm/mmu_context.h>
 #include <asm/kdebug.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include <popcorn/types.h>
 #include <popcorn/bundle.h>
