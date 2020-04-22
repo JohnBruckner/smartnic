@@ -2789,7 +2789,8 @@ int vm_munmap(unsigned long start, size_t len)
                while (!down_write_trylock(&mm->mmap_sem))
                        schedule();
        } else {
-               down_write(&mm->mmap_sem);
+               if (down_write_killable(&mm->mmap_sem))
+		return -EINTR;
        }
 #else
 	if (down_write_killable(&mm->mmap_sem))
