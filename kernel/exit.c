@@ -505,7 +505,7 @@ static void exit_mm(void)
 	sync_mm_rss(mm);
 
 #ifdef CONFIG_POPCORN
-	process_server_task_exit(tsk);
+	process_server_task_exit(current);
 #endif
 
 	/*
