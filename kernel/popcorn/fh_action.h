@@ -13,7 +13,7 @@ enum {
 								 execution on the node if ongoing handling
 								 brings a page successfully */
 
-	FAULT_FLAG_REMOTE = 0x100,
+	FAULT_FLAG_REMOTE_POPCORN = 0x100, //duplicated define in linux/mm.h
 
 	FH_ACTION_MAX_FOLLOWER = 8,
 };

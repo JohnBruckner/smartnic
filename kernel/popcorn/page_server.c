@@ -20,21 +20,19 @@
 #include <linux/delay.h>
 #include <linux/random.h>
 #include <linux/radix-tree.h>
-
+#include <linux/sched/mm.h>
 #include <asm/tlbflush.h>
 #include <asm/cacheflush.h>
 #include <asm/mmu_context.h>
-
 #include <popcorn/types.h>
 #include <popcorn/bundle.h>
 #include <popcorn/pcn_kmsg.h>
 
 #include "types.h"
-#include "pgtable.h"
 #include "wait_station.h"
 #include "page_server.h"
 #include "fh_action.h"
-
+#include "pgtable.h"
 #include "trace_events.h"
 
 inline void page_server_start_mm_fault(unsigned long address)
@@ -440,7 +438,7 @@ static struct fault_handle *__start_fault_handling(struct task_struct *tsk, unsi
 
 	fh = __alloc_fault_handle(tsk, addr);
 	fh->flags |= fault_for_write(fault_flags) ? FAULT_HANDLE_WRITE : 0;
-	fh->flags |= (fault_flags & FAULT_FLAG_REMOTE) ? FAULT_HANDLE_REMOTE : 0;
+	fh->flags |= (fault_flags & FAULT_FLAG_REMOTE_POPCORN) ? FAULT_HANDLE_REMOTE : 0;
 
 	spin_unlock_irqrestore(&rc->faults_lock[fk], flags);
 	put_task_remote(tsk);
@@ -547,7 +545,7 @@ static pte_t *__get_pte_at_alloc(struct mm_struct *mm, struct vm_area_struct *vm
 	pmd = pmd_alloc(mm, pud, addr);
 	if (!pmd) return NULL;
 
-	pte = pte_alloc_map(mm, vma, pmd, addr);
+	pte = pte_alloc_map(mm, pmd, addr);//no need vma
 
 	*ppmd = pmd;
 	*ptlp = pte_lockptr(mm, pmd);
@@ -1225,7 +1223,7 @@ static void __make_pte_valid(struct mm_struct *mm,
 static int __handle_remotefault_at_remote(struct task_struct *tsk, struct mm_struct *mm, struct vm_area_struct *vma, remote_page_request_t *req, remote_page_response_t *res)
 {
 	unsigned long addr = req->addr;
-	unsigned fault_flags = req->fault_flags | FAULT_FLAG_REMOTE;
+	unsigned fault_flags = req->fault_flags | FAULT_FLAG_REMOTE_POPCORN;
 	unsigned char *paddr;
 	struct page *page;
 
@@ -1301,7 +1299,7 @@ static int __handle_remotefault_at_origin(struct task_struct *tsk, struct mm_str
 {
 	int from_nid = PCN_KMSG_FROM_NID(req);
 	unsigned long addr = req->addr;
-	unsigned long fault_flags = req->fault_flags | FAULT_FLAG_REMOTE;
+	unsigned long fault_flags = req->fault_flags | FAULT_FLAG_REMOTE_POPCORN;
 	unsigned char *paddr;
 	struct page *page;
 
@@ -1639,7 +1637,7 @@ static int __handle_localfault_at_remote(struct mm_struct *mm,
 		page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, addr);
 		BUG_ON(!page);
 
-		if (mem_cgroup_try_charge(page, mm, GFP_KERNEL, &memcg)) {
+		if (mem_cgroup_try_charge(page, mm, GFP_KERNEL, &memcg, false)) {
 			BUG();
 		}
 		populated = true;
@@ -1683,7 +1681,7 @@ static int __handle_localfault_at_remote(struct mm_struct *mm,
 		spin_lock(ptl);
 		if (populated) {
 			do_set_pte(vma, addr, page, pte, fault_for_write(fault_flags), true);
-			mem_cgroup_commit_charge(page, memcg, false);
+			mem_cgroup_commit_charge(page, memcg, false, false); //just for pass compile
 			lru_cache_add_active_or_unevictable(page, vma);
 		} else {
 			__make_pte_valid(mm, vma, addr, fault_flags, pte);
