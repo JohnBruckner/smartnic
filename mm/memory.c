@@ -4077,7 +4077,7 @@ int handle_pte_fault_origin(struct mm_struct *mm,
 		return VM_FAULT_OOM;
 
 	if (mem_cgroup_try_charge(page, mm, GFP_KERNEL, &memcg, false)) {
-		page_cache_release(page);
+		put_page(page);
 		return VM_FAULT_OOM;
 	}
 
@@ -4091,7 +4091,7 @@ int handle_pte_fault_origin(struct mm_struct *mm,
 	if (!pte_none(*pte)) {
 		/* Somebody already attached a page */
 		mem_cgroup_cancel_charge(page, memcg, false);
-		page_cache_release(page);
+		put_page(page);
 	} else {
 		inc_mm_counter_fast(mm, MM_ANONPAGES);
 		page_add_new_anon_rmap(page, vma, address, false);
@@ -4121,7 +4121,7 @@ int cow_file_at_origin(struct mm_struct *mm, struct vm_area_struct *vma, unsigne
 	if (!new_page) return VM_FAULT_OOM;
 
 	if (mem_cgroup_try_charge(new_page, mm, GFP_KERNEL, &memcg, false)) {
-		page_cache_release(new_page);
+		put_page(new_page);
 		return VM_FAULT_OOM;
 	}
 
@@ -4150,7 +4150,7 @@ int cow_file_at_origin(struct mm_struct *mm, struct vm_area_struct *vma, unsigne
 	update_mmu_cache(vma, addr, pte);
 
 	page_remove_rmap(old_page, false);
-	page_cache_release(old_page);
+	put_page(old_page);
 
 	return 0;
 }
