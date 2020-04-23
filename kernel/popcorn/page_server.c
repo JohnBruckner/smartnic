@@ -27,7 +27,7 @@
 #include <popcorn/types.h>
 #include <popcorn/bundle.h>
 #include <popcorn/pcn_kmsg.h>
-
+#include <linux/sched/debug.h>
 #include "types.h"
 #include "wait_station.h"
 #include "page_server.h"
@@ -1680,7 +1680,15 @@ static int __handle_localfault_at_remote(struct mm_struct *mm,
 	} else {
 		spin_lock(ptl);
 		if (populated) {
-			do_set_pte(vma, addr, page, pte, fault_for_write(fault_flags), true);
+  			struct vm_fault vmf = {
+				.vma = vma,
+				.address = addr,
+				.pte = pte,
+				.flags = fault_flags,
+				.pmd = pmd,
+				.pgoff = linear_page_index(vma, addr),
+			};
+			alloc_set_pte(&vmf, memcg, page); // updated do_set_pte
 			mem_cgroup_commit_charge(page, memcg, false, false); //just for pass compile
 			lru_cache_add_active_or_unevictable(page, vma);
 		} else {
