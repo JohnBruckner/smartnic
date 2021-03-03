@@ -24,10 +24,11 @@
 #include <asm/tlbflush.h>
 #include <asm/cacheflush.h>
 #include <asm/mmu_context.h>
-#include <popcorn/types.h>
 #include <popcorn/bundle.h>
 #include <popcorn/pcn_kmsg.h>
+#include <popcorn/types.h>
 #include <linux/sched/debug.h>
+#include <linux/sched/task_stack.h>
 #include "types.h"
 #include "wait_station.h"
 #include "page_server.h"
@@ -111,15 +112,15 @@ static inline unsigned long *__get_page_info_mapped(struct mm_struct *mm, unsign
 
 	page = radix_tree_lookup(&rc->pages, key);
 	if (!page) return NULL;
-
+	//return the address after the mapped range 
 	return (unsigned long *)kmap_atomic(page) + *offset;
 }
 
 void free_remote_context_pages(struct remote_context *rc)
 {
-	int nr_pages;
+	int nr_pages; //total number of owner's pages
 	const int FREE_BATCH = 16;
-	struct page *pages[FREE_BATCH];
+	struct page *pages[FREE_BATCH];  //so,each batch is 256bytes?
 
 	do {
 		int i;
@@ -511,13 +512,17 @@ static bool __finish_fault_handling(struct fault_handle *fh)
 static pte_t *__get_pte_at(struct mm_struct *mm, unsigned long addr, pmd_t **ppmd, spinlock_t **ptlp)
 {
 	pgd_t *pgd;
+        p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *pmd;
 
 	pgd = pgd_offset(mm, addr);
 	if (!pgd || pgd_none(*pgd)) return NULL;
 
-	pud = pud_offset(pgd, addr);
+        p4d = p4d_offset(pgd, addr);
+        if (!p4d || p4d_none(*p4d)) return NULL;
+
+	pud = pud_offset(p4d, addr);
 	if (!pud || pud_none(*pud)) return NULL;
 
 	pmd = pmd_offset(pud, addr);
@@ -532,6 +537,7 @@ static pte_t *__get_pte_at(struct mm_struct *mm, unsigned long addr, pmd_t **ppm
 static pte_t *__get_pte_at_alloc(struct mm_struct *mm, struct vm_area_struct *vma, unsigned long addr, pmd_t **ppmd, spinlock_t **ptlp)
 {
 	pgd_t *pgd;
+        p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte;
@@ -539,7 +545,10 @@ static pte_t *__get_pte_at_alloc(struct mm_struct *mm, struct vm_area_struct *vm
 	pgd = pgd_offset(mm, addr);
 	if (!pgd) return NULL;
 
-	pud = pud_alloc(mm, pgd, addr);
+        p4d = p4d_alloc(mm, pgd, addr);
+        if (!p4d) return NULL;
+ 
+	pud = pud_alloc(mm, p4d, addr);
 	if (!pud) return NULL;
 
 	pmd = pmd_alloc(mm, pud, addr);

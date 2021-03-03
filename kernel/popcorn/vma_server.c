@@ -76,7 +76,7 @@ static unsigned long map_difference(struct mm_struct *mm, struct file *file,
 			error = do_mmap_pgoff(file, start, end - start,
 					prot, flags, pgoff, &populate,NULL);
 			if (error != start) {
-				ret = VM_FAULT_SIGBUS;
+				ret = VM_FAULT_SIGBUS; //SIGBUS, maybe we can dig here.
 			}
 			break;
 		} else if (start >= vma->vm_start && end <= vma->vm_end) {
@@ -103,7 +103,7 @@ static unsigned long map_difference(struct mm_struct *mm, struct file *file,
 			error = do_mmap_pgoff(file, start, vma->vm_start - start,
 					prot, flags, pgoff, &populate, NULL);
 			if (error != start) {
-				ret = VM_FAULT_SIGBUS;;
+				ret = VM_FAULT_SIGBUS;
 			}
 			break;
 		} else if (start <= vma->vm_start && vma->vm_end <= end) {

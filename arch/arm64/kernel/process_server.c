@@ -18,7 +18,7 @@
 #include <linux/sched.h>
 #include <linux/uaccess.h>
 #include <linux/ptrace.h>
-
+#include <linux/sched/debug.h>
 #include <asm/compat.h>
 #include <asm/fpsimd.h>
 
