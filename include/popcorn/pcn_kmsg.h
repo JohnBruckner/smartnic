@@ -86,9 +86,9 @@ struct pcn_kmsg_hdr {
 	enum pcn_kmsg_prio prio	:2;
 	enum pcn_kmsg_type type	:8;
 	size_t size;
-	printk("pcn_kmsg_prio is: %d", prio);
-	printk("pcn_kmsg_type is: %d", type);
-	printk("size is: %zu", size);
+	// printk("pcn_kmsg_prio is: %d", prio);
+	// printk("pcn_kmsg_type is: %d", type);
+	// printk("size is: %zu", size);
 } __attribute__((packed));
 
 #define PCN_KMSG_FROM_NID(x) \
