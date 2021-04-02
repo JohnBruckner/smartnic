@@ -72,7 +72,7 @@ static int ksock_recv(struct socket *sock, char *buf, size_t len)
 static int recv_handler(void* arg0)
 {
 	struct sock_handle *sh = arg0;
-	MSGPRINTK("RECV handler for %d is ready\n", sh->nid);
+	printk("RECV handler for %d is ready\n", sh->nid);
 
 	while (!kthread_should_stop()) {
 		int len;
@@ -115,6 +115,7 @@ static int recv_handler(void* arg0)
 		if (ret < 0) break;
 
 		/* Call pcn_kmsg upper layer */
+		printk
 		pcn_kmsg_process((struct pcn_kmsg_message *)data);
 	}
 	return 0;
@@ -218,7 +219,7 @@ static int deq_send(struct sock_handle *sh)
 static int send_handler(void* arg0)
 {
 	struct sock_handle *sh = arg0;
-	MSGPRINTK("SEND handler for %d is ready\n", sh->nid);
+	printk("SEND handler for %d is ready\n", sh->nid);
 
 	while (!kthread_should_stop()) {
 		deq_send(sh);
