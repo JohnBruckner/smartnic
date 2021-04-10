@@ -11,12 +11,17 @@
 #define RDMA_PORT 11453
 #define RDMA_ADDR_RESOLVE_TIMEOUT_MS 5000
 
+#define CONFIG_FILE_LEN 256
+#define CONFIG_FILE_PATH        "/etc/popcorn/nodes_rdma"
+#define CONFIG_FILE_CHUNK_SIZE  512
+
 #define MAX_RECV_DEPTH	((PAGE_SIZE << (MAX_ORDER - 1)) / PCN_KMSG_MAX_SIZE)
 #define MAX_SEND_DEPTH	(MAX_RECV_DEPTH)
 #define RDMA_SLOT_SIZE	(PAGE_SIZE * 2)
 #define NR_RDMA_SLOTS	((PAGE_SIZE << (MAX_ORDER - 1)) / RDMA_SLOT_SIZE)
 
 static unsigned int use_rb_thr = PAGE_SIZE / 2;
+static char config_file_path[CONFIG_FILE_LEN];
 
 struct work_header {
 	enum {
@@ -93,6 +98,72 @@ static DECLARE_BITMAP(__rdma_slots, NR_RDMA_SLOTS) = {0};
 static char *__rdma_sink_addr;
 static dma_addr_t __rdma_sink_dma_addr;
 
+
+static bool load_config_file(char *file)
+{
+	struct file *fp;
+	int bytes_read, ret;
+	int num_nodes = 0;
+	bool retval = true;
+	char ip_addr[CONFIG_FILE_CHUNK_SIZE];
+	u8 i4_addr[4];
+	loff_t offset = 0;
+	const char *end;
+
+	/* If no path was passed in, use hard coded default */
+	if (file[0] == '\0') {
+		strlcpy(file, CONFIG_FILE_PATH, CONFIG_FILE_LEN);
+	}
+
+	fp = filp_open(file, O_RDONLY, 0);
+	if (IS_ERR(fp)) {
+		MSGPRINTK("Cannot open config file %ld\n", PTR_ERR(fp));
+		return false;
+	}
+
+	while (num_nodes < (max_nodes - 1)) {
+		bytes_read = kernel_read(fp, ip_addr, CONFIG_FILE_CHUNK_SIZE, &offset);
+		if (bytes_read > 0) {
+			int str_off, str_len, j;
+
+			/* Replace \n, \r with \0 */
+			for (j = 0; j < CONFIG_FILE_CHUNK_SIZE; j++) {
+				if (ip_addr[j] == '\n' || ip_addr[j] == '\r') {
+					ip_addr[j] = '\0';
+				}
+			}
+
+			str_off = 0;
+			str_len = strlen(ip_addr);
+			while (str_off < bytes_read) {
+				str_len = strlen(ip_addr + str_off);
+				
+				/* Make sure IP address is a valid IPv4 address */
+				if(str_len > 0){
+					ret = in4_pton(ip_addr + str_off, -1, i4_addr, -1, &end);
+					if (!ret) {
+						MSGPRINTK("invalid IP address in config file\n");
+						retval = false;
+						goto done;
+					}
+
+					ip_table[num_nodes++] = *((uint32_t *) i4_addr);
+				}
+
+				str_off += str_len + 1;
+			}
+		} else {
+			break;
+		}
+	}
+
+	/* Update max_nodes with number of nodes read in from config file */
+	max_nodes = num_nodes;
+
+done:
+	filp_close(fp, NULL);
+	return retval;
+}
 static inline int __get_rdma_buffer(void **addr, dma_addr_t *dma_addr) {
 	int i;
 	do {
@@ -347,7 +418,7 @@ void rdma_kmsg_stat(struct seq_file *seq, void *v)
 static int __send_to(int to_nid, struct send_work *sw, size_t size)
 {
 	struct rdma_handle *rh = rdma_handles[to_nid];
-	struct ib_send_wr *bad_wr = NULL;
+	const struct ib_send_wr *bad_wr = NULL;
 	int ret;
 
 #ifdef CONFIG_POPCORN_CHECK_SANITY
@@ -449,7 +520,7 @@ int rdma_kmsg_write(int to_nid, dma_addr_t rdma_addr, void *addr, size_t size, u
 {
 	DECLARE_COMPLETION_ONSTACK(done);
 	struct rdma_work *rw;
-	struct ib_send_wr *bad_wr = NULL;
+	const struct ib_send_wr *bad_wr = NULL;
 
 	dma_addr_t dma_addr;
 	int ret;
@@ -493,7 +564,7 @@ void rdma_kmsg_done(struct pcn_kmsg_message *msg)
 {
 	/* Put back the receive work */
 	int ret;
-	struct ib_recv_wr *bad_wr = NULL;
+	const struct ib_recv_wr *bad_wr = NULL;
 	int from_nid = PCN_KMSG_FROM_NID(msg);
 	struct rdma_handle *rh = rdma_handles[from_nid];
 	int index = ((void *)msg - rh->recv_buffer) / PCN_KMSG_MAX_SIZE;
@@ -619,7 +690,7 @@ static __init int __setup_pd_cq_qp(struct rdma_handle *rh)
 
 	/* Create global pd if it is not allocated yet */
 	if (!rdma_pd) {
-		rdma_pd = ib_alloc_pd(rh->device);
+		rdma_pd = ib_alloc_pd(rh->device,0);
 		if (IS_ERR(rdma_pd)) {
 			ret = PTR_ERR(rdma_pd);
 			rdma_pd = NULL;
@@ -699,7 +770,9 @@ static __init int __setup_buffers_and_pools(struct rdma_handle *rh)
 
 	for (i = 0; i < MAX_RECV_DEPTH; i++) {
 		struct recv_work *rw = rws + i;
-		struct ib_recv_wr *wr, *bad_wr = NULL;
+		struct ib_recv_wr *wr;
+	        const struct ib_recv_wr *bad_wr = NULL;
+		
 		struct ib_sge *sgl;
 
 		rw->header.type = WORK_TYPE_RECV;
@@ -737,7 +810,7 @@ static __init int __setup_rdma_buffer(const int nr_chunks)
 	int ret;
 	DECLARE_COMPLETION_ONSTACK(done);
 	struct ib_mr *mr = NULL;
-	struct ib_send_wr *bad_wr = NULL;
+	const struct ib_send_wr *bad_wr = NULL;
 	struct ib_reg_wr reg_wr = {
 		.wr = {
 			.opcode = IB_WR_REG_MR,
@@ -768,7 +841,7 @@ static __init int __setup_rdma_buffer(const int nr_chunks)
 	sg_dma_address(&sg) = __rdma_sink_dma_addr;
 	sg_dma_len(&sg) = 1 << (PAGE_SHIFT + alloc_order);
 
-	ret = ib_map_mr_sg(mr, &sg, 1, PAGE_SIZE);
+	ret = ib_map_mr_sg(mr, &sg, 1,NULL, PAGE_SIZE);
 	if (ret != 1) {
 		printk("Cannot map scatterlist to mr, %d\n", ret);
 		goto out_dereg;
@@ -780,7 +853,7 @@ static __init int __setup_rdma_buffer(const int nr_chunks)
 	 * rdma_handles[my_nid] is for accepting connection without qp & cp.
 	 * So, let's use rdma_handles[1] for nid 0 and rdma_handles[0] otherwise.
 	 */
-	ret = ib_post_send(rdma_handles[!my_nid]->qp, &reg_wr.wr, &bad_wr);
+	ret = ib_post_send(rdma_handles[!my_nid]->qp, &reg_wr.wr,&bad_wr);
 	if (ret || bad_wr) {
 		printk("Cannot register mr, %d %p\n", ret, bad_wr);
 		if (bad_wr) ret = -EINVAL;
@@ -1204,8 +1277,12 @@ int __init init_kmsg_rdma(void)
 
 	MSGPRINTK("\nLoading Popcorn messaging layer over RDMA...\n");
 
+	/* Load node configuration */
+        if (!load_config_file(config_file_path)) return -EINVAL;
+
 	if (!identify_myself()) return -EINVAL;
 	pcn_kmsg_set_transport(&transport_rdma);
+
 
 	for (i = 0; i < MAX_NUM_NODES; i++) {
 		struct rdma_handle *rh;

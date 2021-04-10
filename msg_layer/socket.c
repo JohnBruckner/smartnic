@@ -1,21 +1,26 @@
 /**
  * msg_socket.c
- *  Messaging transport layer over TCP/IP
+ * Messaging transport layer over TCP/IP
  *
  * Authors:
  *  Ho-Ren (Jack) Chuang <horenc@vt.edu>
  *  Sang-Hoon Kim <sanghoon@vt.edu>
  */
-#include <linux/seq_file.h>
-#include <linux/proc_fs.h>
 #include <linux/kthread.h>
 #include <popcorn/stat.h>
+#include <linux/module.h>
+#include <linux/inet.h>
+#include <linux/string.h>
+#include <linux/fs.h>
 #include "ring_buffer.h"
 #include "common.h"
+
 #define PORT 30467
 #define MAX_SEND_DEPTH	1024
-#define NIPQUAD(addr) ((unsigned char *)&addr)[0],((unsigned char *)&addr)[1],((unsigned char *)&addr)[2],((unsigned char *)&addr)[3]
-#define NIPQUAD_FMT "%u.%u.%u.%u"
+
+#define CONFIG_FILE_LEN	256
+#define CONFIG_FILE_PATH	"/etc/popcorn/nodes"
+#define CONFIG_FILE_CHUNK_SIZE	512
 
 enum {
 	SEND_FLAG_POSTED = 0,
@@ -48,6 +53,7 @@ static struct sock_handle sock_handles[MAX_NUM_NODES] = {};
 static struct socket *sock_listen = NULL;
 static struct ring_buffer send_buffer = {};
 
+static char config_file_path[CONFIG_FILE_LEN];
 
 /**
  * Handle inbound messages
@@ -72,7 +78,7 @@ static int ksock_recv(struct socket *sock, char *buf, size_t len)
 static int recv_handler(void* arg0)
 {
 	struct sock_handle *sh = arg0;
-	printk("RECV handler for %d is ready\n", sh->nid);
+	MSGPRINTK("RECV handler for %d is ready\n", sh->nid);
 
 	while (!kthread_should_stop()) {
 		int len;
@@ -86,7 +92,9 @@ static int recv_handler(void* arg0)
 		len = sizeof(header);
 		while (len > 0) {
 			ret = ksock_recv(sh->sock, (char *)(&header) + offset, len);
-			if (ret == -1) break;
+			if (ret == -1 || kthread_should_stop() ) {
+				return 0;
+			}
 			offset += ret;
 			len -= ret;
 		}
@@ -108,14 +116,15 @@ static int recv_handler(void* arg0)
 
 		while (len > 0) {
 			ret = ksock_recv(sh->sock, data + offset, len);
-			if (ret == -1) break;
+			if (ret == -1 || kthread_should_stop() ) {
+				return 0;
+			}
 			offset += ret;
 			len -= ret;
 		}
 		if (ret < 0) break;
 
 		/* Call pcn_kmsg upper layer */
-		printk
 		pcn_kmsg_process((struct pcn_kmsg_message *)data);
 	}
 	return 0;
@@ -148,8 +157,15 @@ static int enq_send(int dest_nid, struct pcn_kmsg_message *msg, unsigned long fl
 	unsigned long at;
 	struct sock_handle *sh = sock_handles + dest_nid;
 	struct q_item *qi;
+
+	if (!sh) return -1;
+
 	do {
 		ret = down_interruptible(&sh->q_full);
+
+		/* Return if sleep is interrupted by a signal */
+		if (ret == -EINTR)
+			return -1;
 	} while (ret);
 
 	spin_lock(&sh->q_lock);
@@ -181,6 +197,10 @@ static int deq_send(struct sock_handle *sh)
 
 	do {
 		ret = down_interruptible(&sh->q_empty);
+
+		/* Return if sleep is interrupted by a signal */
+		if (ret == -EINTR || kthread_should_stop() )
+			return 0;
 	} while (ret);
 
 	spin_lock(&sh->q_lock);
@@ -200,7 +220,7 @@ static int deq_send(struct sock_handle *sh)
 	while (remaining > 0) {
 		int sent = ksock_send(sh->sock, p, remaining);
 		if (sent < 0) {
-			MSGPRINTK("send interrupted, %d\n", sent);
+			//MSGPRINTK("send interrupted, %d\n", sent);
 			io_schedule();
 			continue;
 		}
@@ -219,7 +239,7 @@ static int deq_send(struct sock_handle *sh)
 static int send_handler(void* arg0)
 {
 	struct sock_handle *sh = arg0;
-	printk("SEND handler for %d is ready\n", sh->nid);
+	MSGPRINTK("SEND handler for %d is ready\n", sh->nid);
 
 	while (!kthread_should_stop()) {
 		deq_send(sh);
@@ -264,12 +284,16 @@ void sock_kmsg_put(struct pcn_kmsg_message *msg)
  ***********************************************/
 int sock_kmsg_send(int dest_nid, struct pcn_kmsg_message *msg, size_t size)
 {
-	DECLARE_COMPLETION_ONSTACK(done);
-	enq_send(dest_nid, msg, 0, &done);
+	int ret;
 
-	if (!try_wait_for_completion(&done)) {
-		int ret = wait_for_completion_io_timeout(&done, 60 * HZ);
-		if (!ret) return -EAGAIN;
+	DECLARE_COMPLETION_ONSTACK(done);
+	ret = enq_send(dest_nid, msg, 0, &done);
+
+	if (ret != -1) {
+		if (!try_wait_for_completion(&done)) {
+			int ret = wait_for_completion_io_timeout(&done, 60 * HZ);
+			if (!ret) return -EAGAIN;
+		}
 	}
 	return 0;
 }
@@ -295,7 +319,7 @@ void sock_kmsg_stat(struct seq_file *seq, void *v)
 #else
 				0ULL,
 #endif
-                                "socket");
+				"socket");
 	}
 }
 
@@ -313,50 +337,6 @@ struct pcn_kmsg_transport transport_socket = {
 };
 
 
-
-static int __show_peers(struct seq_file *seq, void *v)
-{	
-	int i;
-	char* myself = " ";	
-	for (i = 0; i < MAX_NUM_NODES; i++) 
-	{
-		if (i == my_nid) myself = "*";
-		seq_printf(seq, "%s %3d  "NIPQUAD_FMT"  %s\n",
-				myself,
-                                i,
-                                NIPQUAD(ip_table[i]),
-                                "NODE_IP");
-		myself = " ";
-	}
-	return 0;
-}
-
-
-static int __open_peers(struct inode *inode, struct file *file)
-{
-        return single_open(file, &__show_peers, NULL);
-}
-
-
-
-static struct file_operations peers_ops = {
-        .owner = THIS_MODULE,
-        .open = __open_peers,
-        .read = seq_read,
-        .llseek  = seq_lseek,
-        .release = single_release,
-};
-static struct proc_dir_entry *proc_entry = NULL;
-static int peers_init(void)
-{
-	proc_entry = proc_create("popcorn_peers",  0444, NULL, &peers_ops);
-        if (proc_entry == NULL) {
-                printk(KERN_ERR"cannot create proc_fs entry for popcorn stats\n");
-                return -ENOMEM;
-        }
-        return 0;
-}
-
 static struct task_struct * __init __start_handler(const int nid, const char *type, int (*handler)(void *data))
 {
 	char name[40];
@@ -365,7 +345,7 @@ static struct task_struct * __init __start_handler(const int nid, const char *ty
 	sprintf(name, "pcn_%s_%d", type, nid);
 	tsk = kthread_run(handler, sock_handles + nid, name);
 	if (IS_ERR(tsk)) {
-		printk(KERN_ERR "Cannot create %s handler, %ld\n", name, PTR_ERR(tsk));
+		MSGPRINTK(KERN_ERR "Cannot create %s handler, %ld\n", name, PTR_ERR(tsk));
 		return tsk;
 	}
 
@@ -437,7 +417,6 @@ static int __init __accept_client(int *nid)
 	bool found = false;
 	struct socket *sock;
 	struct sockaddr_in addr;
-	int addr_len = sizeof(addr);
 
 	do {
 		ret = sock_create(PF_INET, SOCK_STREAM, IPPROTO_TCP, &sock);
@@ -449,16 +428,16 @@ static int __init __accept_client(int *nid)
 		ret = kernel_accept(sock_listen, &sock, 0);
 		if (ret < 0) {
 			MSGPRINTK("Failed to accept, %d\n", ret);
-			goto out_release;
+			goto out;
 		}
 
-		ret = kernel_getpeername(sock, (struct sockaddr *)&addr, &addr_len);
+		ret = kernel_getpeername(sock, (struct sockaddr *)&addr);
 		if (ret < 0) {
 			goto out_release;
 		}
 
 		/* Identify incoming peer nid */
-		for (i = 0; i < MAX_NUM_NODES; i++) {
+		for (i = 0; i < max_nodes; i++) {
 			if (addr.sin_addr.s_addr == ip_table[i]) {
 				*nid = i;
 				found = true;
@@ -480,6 +459,7 @@ static int __init __accept_client(int *nid)
 
 out_release:
 	sock_release(sock);
+out:
 	return ret;
 }
 
@@ -504,7 +484,7 @@ static int __init __listen_to_connection(void)
 		goto out_release;
 	}
 
-	ret = kernel_listen(sock_listen, MAX_NUM_NODES);
+	ret = kernel_listen(sock_listen, max_nodes);
 	if (ret < 0) {
 		printk(KERN_ERR "Failed to listen to connections, %d\n", ret);
 		goto out_release;
@@ -519,21 +499,85 @@ out_release:
 	return ret;
 }
 
+static bool load_config_file(char *file)
+{
+	struct file *fp;
+	int bytes_read, ret;
+	int num_nodes = 0;
+	bool retval = true;
+	char ip_addr[CONFIG_FILE_CHUNK_SIZE];
+	u8 i4_addr[4];
+	loff_t offset = 0;
+	const char *end;
+
+	/* If no path was passed in, use hard coded default */
+	if (file[0] == '\0') {
+		strlcpy(file, CONFIG_FILE_PATH, CONFIG_FILE_LEN);
+	}
+
+	fp = filp_open(file, O_RDONLY, 0);
+	if (IS_ERR(fp)) {
+		MSGPRINTK("Cannot open config file %ld\n", PTR_ERR(fp));
+		return false;
+	}
+
+	while (num_nodes < (max_nodes - 1)) {
+		bytes_read = kernel_read(fp, ip_addr, CONFIG_FILE_CHUNK_SIZE, &offset);
+		if (bytes_read > 0) {
+			int str_off, str_len, j;
+
+			/* Replace \n, \r with \0 */
+			for (j = 0; j < CONFIG_FILE_CHUNK_SIZE; j++) {
+				if (ip_addr[j] == '\n' || ip_addr[j] == '\r') {
+					ip_addr[j] = '\0';
+				}
+			}
+
+			str_off = 0;
+			str_len = strlen(ip_addr);
+			while (str_off < bytes_read) {
+				str_len = strlen(ip_addr + str_off);
+				
+				/* Make sure IP address is a valid IPv4 address */
+				if(str_len > 0){
+					ret = in4_pton(ip_addr + str_off, -1, i4_addr, -1, &end);
+					if (!ret) {
+						MSGPRINTK("invalid IP address in config file\n");
+						retval = false;
+						goto done;
+					}
+
+					ip_table[num_nodes++] = *((uint32_t *) i4_addr);
+				}
+
+				str_off += str_len + 1;
+			}
+		} else {
+			break;
+		}
+	}
+
+	/* Update max_nodes with number of nodes read in from config file */
+	max_nodes = num_nodes;
+
+done:
+	filp_close(fp, NULL);
+	return retval;
+}
+
 static void __exit exit_kmsg_sock(void)
 {
 	int i;
-
 	if (sock_listen) sock_release(sock_listen);
-
-	for (i = 0; i < MAX_NUM_NODES; i++) {
+	for (i = 0; i < max_nodes; i++) {
 		struct sock_handle *sh = sock_handles + i;
 		if (sh->send_handler) {
-			kthread_stop(sh->send_handler);
+			wake_up_process(sh->send_handler);
 		} else {
 			if (sh->msg_q) kfree(sh->msg_q);
 		}
 		if (sh->recv_handler) {
-			kthread_stop(sh->recv_handler);
+			wake_up_process(sh->recv_handler);
 		}
 		if (sh->sock) {
 			sock_release(sh->sock);
@@ -550,10 +594,13 @@ static int __init init_kmsg_sock(void)
 
 	MSGPRINTK("Loading Popcorn messaging layer over TCP/IP...\n");
 
+	/* Load node configuration */
+	if (!load_config_file(config_file_path)) return -EINVAL;
+
 	if (!identify_myself()) return -EINVAL;
 	pcn_kmsg_set_transport(&transport_socket);
 
-	for (i = 0; i < MAX_NUM_NODES; i++) {
+	for (i = 0; i < max_nodes; i++) {
 		struct sock_handle *sh = sock_handles + i;
 
 		sh->msg_q = kmalloc(sizeof(*sh->msg_q) * MAX_SEND_DEPTH, GFP_KERNEL);
@@ -595,7 +642,7 @@ static int __init init_kmsg_sock(void)
 
 	set_popcorn_node_online(my_nid, true);
 
-	for (i = my_nid + 1; i < MAX_NUM_NODES; i++) {
+	for (i = my_nid + 1; i < max_nodes; i++) {
 		int nid;
 		if ((ret = __accept_client(&nid))) goto out_exit;
 		set_popcorn_node_online(nid, true);
@@ -604,14 +651,33 @@ static int __init init_kmsg_sock(void)
 	broadcast_my_node_info(i);
 
 	PCNPRINTK("Ready on TCP/IP\n");
-	peers_init();
-	
 	return 0;
 
 out_exit:
 	exit_kmsg_sock();
 	return ret;
 }
+
+static int max_nodes_set(const char *val, const struct kernel_param *kp)
+{
+	int n = 0, ret;
+
+	ret = kstrtoint(val, 10, &n);
+	if (ret != 0 || n < 1 || n > MAX_NUM_NODES)
+		return -EINVAL;
+
+	return param_set_int(val, kp);
+}
+
+static const struct kernel_param_ops param_ops = {
+	.set	= max_nodes_set,
+};
+
+module_param_cb(simpcb, &param_ops, &max_nodes, 0664);
+MODULE_PARM_DESC(max_nodes, "Maximum number of nodes supported");
+
+module_param_string(config_file, config_file_path, CONFIG_FILE_LEN, 0400);
+MODULE_PARM_DESC(config_file, "Configuration file path");
 
 module_init(init_kmsg_sock);
 module_exit(exit_kmsg_sock);
