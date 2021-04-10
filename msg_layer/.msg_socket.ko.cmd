@@ -1,1 +1,0 @@
-cmd_/root/smartnic/msg_layer/msg_socket.ko := ld -r -m elf_x86_64  -z max-page-size=0x200000 -T ./scripts/module-common.lds --build-id  -o /root/smartnic/msg_layer/msg_socket.ko /root/smartnic/msg_layer/msg_socket.o /root/smartnic/msg_layer/msg_socket.mod.o ;  true

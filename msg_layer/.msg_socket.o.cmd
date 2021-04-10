@@ -1,1 +1,0 @@
-cmd_/root/smartnic/msg_layer/msg_socket.o := ld -m elf_x86_64  -z max-page-size=0x200000   -r -o /root/smartnic/msg_layer/msg_socket.o /root/smartnic/msg_layer/socket.o /root/smartnic/msg_layer/ring_buffer.o ; scripts/mod/modpost /root/smartnic/msg_layer/msg_socket.o
