@@ -417,7 +417,7 @@ static int __init __accept_client(int *nid)
 	bool found = false;
 	struct socket *sock;
 	struct sockaddr_in addr;
-
+	int addr_len = sizeof(addr);
 	do {
 		ret = sock_create(PF_INET, SOCK_STREAM, IPPROTO_TCP, &sock);
 		if (ret < 0) {
@@ -431,7 +431,7 @@ static int __init __accept_client(int *nid)
 			goto out;
 		}
 
-		ret = kernel_getpeername(sock, (struct sockaddr *)&addr);
+		ret = kernel_getpeername(sock, (struct sockaddr *)&addr, &addr_len);
 		if (ret < 0) {
 			goto out_release;
 		}
